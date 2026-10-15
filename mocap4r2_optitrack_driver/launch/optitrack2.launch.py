@@ -23,10 +23,12 @@ from ament_index_python.packages import get_package_share_directory
 import launch
 
 from launch import LaunchDescription
-from launch.actions import EmitEvent
+from launch.actions import EmitEvent, RegisterEventHandler
 from launch.actions import SetEnvironmentVariable,DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode
+from launch_ros.event_handlers import OnStateTransition
 from launch_ros.events.lifecycle import ChangeState
 
 import lifecycle_msgs.msg
@@ -61,13 +63,26 @@ def generate_launch_description():
         )
     )
 
-    # Make the driver node take the 'activate' transition
-    # driver_activate_trans_event = EmitEvent(
-    #    event = ChangeState(
-    #        lifecycle_node_matcher = launch.events.matchers.matches_action(driver_node),
-    #        transition_id = lifecycle_msgs.msg.Transition.TRANSITION_ACTIVATE,
-    #     )
-    # )
+    # Activate once configured, so one launch starts the stream. Only after a configure,
+    # so a manual deactivate stays put; activate:=false leaves it to
+    # `ros2 lifecycle set /mocap4r2_optitrack_driver_node activate`.
+    driver_activate_on_configured = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=driver_node,
+            start_state='configuring',
+            goal_state='inactive',
+            entities=[
+                EmitEvent(
+                    event=ChangeState(
+                        lifecycle_node_matcher=launch.events.matchers.matches_action(
+                            driver_node),
+                        transition_id=lifecycle_msgs.msg.Transition.TRANSITION_ACTIVATE,
+                    )
+                )
+            ],
+        ),
+        condition=IfCondition(LaunchConfiguration('activate')),
+    )
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -75,8 +90,9 @@ def generate_launch_description():
     ld.add_action(stdout_linebuf_envvar)
     ld.add_action(DeclareLaunchArgument('namespace', default_value=''))
     ld.add_action(DeclareLaunchArgument('config_file', default_value=params_file_path))
+    ld.add_action(DeclareLaunchArgument('activate', default_value='true'))
     ld.add_action(driver_node)
+    ld.add_action(driver_activate_on_configured)
     ld.add_action(driver_configure_trans_event)
-    # ld.add_action(driver_activate_trans_event)
 
     return ld
